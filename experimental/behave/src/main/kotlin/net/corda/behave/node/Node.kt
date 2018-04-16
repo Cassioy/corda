@@ -34,9 +34,7 @@ import java.util.concurrent.CountDownLatch
 class Node(
         val config: Configuration,
         private val rootDirectory: File = currentDirectory,
-        private val settings: ServiceSettings = ServiceSettings(),
-        val rpcProxy: Boolean = false,
-        val networkType: Distribution.Type
+        private val settings: ServiceSettings = ServiceSettings()
 ) {
 
     private val log = getLogger<Node>()
@@ -52,12 +50,6 @@ class Node(
             settings.timeout,
             enableRemoteDebugging = false
     )
-
-//    private val service = DockerContainerService(
-//            name = config.name,
-//            internalPort = config.nodeInterface.dockerPort,
-//            baseImage = config.distribution.baseImage!!,
-//            imageTag = config.distribution.version)
 
     private val isAliveLatch = PatternWatch("Node for \".*\" started up and registered")
 
@@ -89,25 +81,8 @@ class Node(
         log.info("Configuring {} ...", this)
         serviceDependencies.addAll(config.database.type.dependencies(config))
         config.distribution.ensureAvailable()
-        if (networkType == Distribution.Type.CORDA) {
-            config.writeToFile(rootDirectory / "${config.name}.conf")
-        }
-        else {
-            config.writeToFile(rootDirectory / "${config.name}" / "node.conf")
-        }
+        config.writeToFile(rootDirectory / "${config.name}.conf")
         installApps()
-    }
-
-    private fun initialiseDatabase(database: DatabaseConfiguration) {
-        val driversDir = runtimeDirectory / "drivers"
-        log.info("Creating directory for drivers: $driversDir")
-        driversDir.mkdirs()
-        log.info("Initialising database for R3 Corda node: $database")
-        val command = JarCommandWithMain(listOf(config.distribution.dbMigrationJar, rootDirectory / "libs" / database.type.driverJar!!),
-                "com.r3.corda.dbmigration.DBMigration",
-                arrayOf("--base-directory", "$runtimeDirectory", "--execute-migration"),
-                runtimeDirectory, 2.minutes)
-        command.run()
     }
 
     fun start(): Boolean {
@@ -116,12 +91,6 @@ class Node(
         }
         log.info("Starting {} ...", this)
         return try {
-            // initialise database via DB migration tool
-            if (config.distribution.type == Distribution.Type.R3_CORDA &&
-                config.database.type != DatabaseType.H2) {
-                initialiseDatabase(config.database)
-            }
-            // launch node itself
             command.start()
             isStarted = true
             true
@@ -147,7 +116,6 @@ class Node(
             if (isStarted) {
                 log.info("Shutting down {} ...", this)
                 command.kill()
-//                service.stop()
             }
             stopDependencies()
             true
@@ -204,20 +172,6 @@ class Node(
             result = action(client)
         }
         return result ?: error("Failed to run RPC action")
-    }
-
-    fun <T> http(action: (CordaRPCOps) -> T): T {
-        val address = config.nodeInterface
-        val targetHost = NetworkHostAndPort(address.host, address.rpcProxy)
-        log.info("Establishing HTTP connection to ${targetHost.host} on port ${targetHost.port} ...")
-        try {
-            return action(CordaRPCProxyClient(targetHost))
-        }
-        catch (e: Exception) {
-            log.warn("Failed to invoke http endpoint: ", e)
-            e.printStackTrace()
-            error("Failed to run http action")
-        }
     }
 
     override fun toString(): String {
@@ -286,8 +240,6 @@ class Node(
 
         private var notaryType = NotaryType.NONE
 
-        private var compatibilityZoneURL: String? = "\"http://localhost:1300\""
-
         private val issuableCurrencies = mutableListOf<String>()
 
         private var location: String = "London"
@@ -302,10 +254,6 @@ class Node(
 
         private var timeout = Duration.ofSeconds(60)
 
-        private var rpcProxy = false
-
-        var networkType = distribution.type
-
         fun withName(newName: String): Builder {
             name = newName
             return this
@@ -313,7 +261,6 @@ class Node(
 
         fun withDistribution(newDistribution: Distribution): Builder {
             distribution = newDistribution
-            networkType = distribution.type
             return this
         }
 
@@ -325,20 +272,6 @@ class Node(
         fun withNotaryType(newNotaryType: NotaryType): Builder {
             notaryType = newNotaryType
             return this
-        }
-
-        fun withNetworkMap(newCompatibilityZoneURL: String?): Builder {
-            compatibilityZoneURL = newCompatibilityZoneURL
-            return this
-        }
-
-        fun withNetworkType(newNetworkType: Distribution.Type): Builder {
-            networkType = newNetworkType
-            return this
-        }
-
-        fun withRaftConfig(clusterIndex: Int) {
-            // TODO
         }
 
         fun withIssuableCurrencies(vararg currencies: String): Builder {
@@ -377,15 +310,9 @@ class Node(
             return this
         }
 
-        fun withRPCProxy(withRPCProxy: Boolean): Builder {
-            rpcProxy = withRPCProxy
-            return this
-        }
-
         fun build(): Node {
             val name = name ?: error("Node name not set")
             val directory = directory ?: error("Runtime directory not set")
-            val compatibilityZoneURL = if (networkType == Distribution.Type.R3_CORDA) compatibilityZoneURL else null
             return Node(
                     Configuration(
                             name,
@@ -400,14 +327,11 @@ class Node(
                             ),
                             configElements = *arrayOf(
                                 NotaryConfiguration(notaryType),
-                                NetworkMapConfiguration(compatibilityZoneURL),
                                 CurrencyConfiguration(issuableCurrencies)
                             )
                     ),
                     directory,
-                    ServiceSettings(timeout),
-                    rpcProxy = rpcProxy,
-                    networkType = networkType
+                    ServiceSettings(timeout)
             )
         }
 
@@ -417,9 +341,7 @@ class Node(
     }
 
     companion object {
-
         fun new() = Builder()
-
     }
 
 }

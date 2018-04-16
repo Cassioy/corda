@@ -1,24 +1,20 @@
 package net.corda.behave.network
 
 import net.corda.behave.database.DatabaseType
-import net.corda.behave.file.*
+import net.corda.behave.file.LogSource
+import net.corda.behave.file.currentDirectory
+import net.corda.behave.file.div
+import net.corda.behave.file.stagingRoot
 import net.corda.behave.logging.getLogger
 import net.corda.behave.minutes
 import net.corda.behave.node.Distribution
 import net.corda.behave.node.Node
 import net.corda.behave.node.configuration.NotaryType
-import net.corda.behave.process.Command
 import net.corda.behave.process.JarCommand
-import net.corda.behave.seconds
 import net.corda.core.CordaException
-import net.corda.core.CordaRuntimeException
 import org.apache.commons.io.FileUtils
 import java.io.Closeable
 import java.io.File
-import java.lang.Thread.sleep
-import java.nio.file.Files
-import java.nio.file.Paths
-import java.nio.file.StandardCopyOption
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -40,16 +36,11 @@ class Network private constructor(
 
     private var hasError = false
 
-    private var isDoormanNMSRunning = false
-
-    private lateinit var doormanNMS: JarCommand
-
     init {
         FileUtils.forceMkdir(targetDirectory)
     }
 
     class Builder internal constructor(
-            private val networkType: Distribution.Type,
             private val timeout: Duration
     ) {
 
@@ -68,8 +59,6 @@ class Network private constructor(
                 databaseType: DatabaseType = DatabaseType.H2,
                 notaryType: NotaryType = NotaryType.NONE,
                 issuableCurrencies: List<String> = emptyList(),
-                compatibilityZoneURL: String? = null,
-                withRPCProxy: Boolean = false,
                 networkType: Distribution.Type = Distribution.Type.CORDA
         ): Builder {
             return addNode(Node.new()
@@ -78,8 +67,6 @@ class Network private constructor(
                     .withDatabaseType(databaseType)
                     .withNotaryType(notaryType)
                     .withIssuableCurrencies(*issuableCurrencies.toTypedArray())
-                    .withRPCProxy(withRPCProxy)
-                    .withNetworkMap(compatibilityZoneURL)
                     .withNetworkType(networkType)
             )
         }
@@ -99,14 +86,9 @@ class Network private constructor(
             network.copyDatabaseDrivers()
             if (!network.configureNodes()) {
                 throw CordaException("Unable to configure nodes in Corda network")
-//                hasError = true
-//                return
             }
 
-            if (networkType == Distribution.Type.R3_CORDA)
-                network.bootstrapDoorman()
-            else
-                network.bootstrapLocalNetwork()
+            network.bootstrapLocalNetwork()
             return network
         }
     }
@@ -136,139 +118,6 @@ class Network private constructor(
             true
         } else {
             false
-        }
-    }
-
-    /**
-     * This method performs the configuration steps defined in the R3 Corda Network Management readme:
-     * https://github.com/corda/enterprise/blob/master/network-management/README.md
-     * using Local signing and "Auto Approval" mode
-     */
-    private fun bootstrapDoorman() {
-
-        // WARNING!! Need to use the correct bootstrapper
-        // only if using OS nodes (need to choose the latest version)
-        val r3node = nodes.values
-                .find { it.config.distribution.type == Distribution.Type.R3_CORDA } ?: throw CordaRuntimeException("Missing R3 distribution node")
-        val distribution = r3node.config.distribution
-
-        // Copy over reference configuration files used in bootstrapping
-        val source = doormanConfigDirectory
-        val doormanTargetDirectory = targetDirectory/"doorman"
-        source.copyRecursively(doormanTargetDirectory, true)
-
-        // 1. Create key stores for local signer
-
-        //  java -jar doorman-<version>.jar --mode ROOT_KEYGEN
-        log.info("Doorman target directory: $doormanTargetDirectory")
-        runCommand(JarCommand(distribution.doormanJar,
-                              arrayOf("--config-file", "$doormanConfigDirectory/node-init.conf", "--mode", "ROOT_KEYGEN", "--trust-store-password", "password"),
-                              doormanTargetDirectory, timeout))
-
-        //  java -jar doorman-<version>.jar --mode CA_KEYGEN
-        runCommand(JarCommand(distribution.doormanJar,
-                              arrayOf("--config-file", "$doormanConfigDirectory/node-init.conf", "--mode", "CA_KEYGEN"),
-                              doormanTargetDirectory, timeout))
-
-        // 2. Start the doorman service for notary registration
-        val doormanCommand = JarCommand(distribution.doormanJar,
-                                        arrayOf("--config-file", "$doormanConfigDirectory/node-init.conf"),
-                                        doormanTargetDirectory, timeout)
-        runCommand(doormanCommand, noWait = true)
-        // give time for process to be ready
-        sleep(10.seconds.toMillis())
-
-        // Notary Nodes
-        val notaryNodes = nodes.values.filter { it.config.notary.notaryType != NotaryType.NONE }
-        notaryNodes.forEach { notaryNode ->
-            val notaryTargetDirectory = targetDirectory / notaryNode.config.name
-            log.info("Notary target directory: $notaryTargetDirectory")
-
-            // 3. Create notary node and register with the doorman
-            runCommand(JarCommand(distribution.cordaJar,
-                    arrayOf("--initial-registration",
-                            "--base-directory", "$notaryTargetDirectory",
-                            "--network-root-truststore", "../doorman/certificates/distribute-nodes/network-root-truststore.jks",
-                            "--network-root-truststore-password", "password"),
-                    notaryTargetDirectory, timeout))
-
-            // 4. Generate node info files for notary nodes
-            runCommand(JarCommand(distribution.cordaJar,
-                    arrayOf("--just-generate-node-info",
-                            "--base-directory", "$notaryTargetDirectory"),
-                    notaryTargetDirectory, timeout))
-
-            // cp (or ln -s) nodeInfo* notary-node-info
-            val nodeInfoFile = notaryTargetDirectory.listFiles { _, filename -> filename.matches("nodeInfo-.+".toRegex()) }.firstOrNull() ?: throw CordaRuntimeException("Missing notary nodeInfo file")
-            FileUtils.copyFile(nodeInfoFile, notaryTargetDirectory / "notary-node-info")
-        }
-
-        // exit Doorman process
-        doormanCommand.interrupt()
-        doormanCommand.waitFor()
-
-        // 5. Add notary identities to the network parameters
-
-        // 6. Load initial network parameters file for network map service
-        val networkParamsConfig = if (notaryNodes.isEmpty()) "network-parameters-without-notary.conf" else "network-parameters.conf"
-        val updateNetworkParams = JarCommand(distribution.doormanJar,
-                                             arrayOf("--config-file", "$doormanTargetDirectory/node.conf", "--set-network-parameters", "$doormanTargetDirectory/$networkParamsConfig"),
-                                             doormanTargetDirectory, timeout)
-        runCommand(updateNetworkParams)
-
-        // 7. Start a fully configured Doorman / NMS
-        doormanNMS = JarCommand(distribution.doormanJar,
-                            arrayOf("--config-file", "$doormanConfigDirectory/node.conf"),
-                            doormanTargetDirectory, timeout)
-        runCommand(doormanNMS, noWait = true)
-        // give time for process to be ready
-        sleep(10.seconds.toMillis())
-
-        // 8. Register other participant nodes
-        val partyNodes = nodes.values.filter { it.config.notary.notaryType == NotaryType.NONE }
-        partyNodes.forEach { partyNode ->
-            val partyTargetDirectory = targetDirectory / partyNode.config.name
-            log.info("Party target directory: $partyTargetDirectory")
-
-            // 3. Create notary node and register with the doorman
-            runCommand(JarCommand(distribution.cordaJar,
-                    arrayOf("--initial-registration",
-                            "--network-root-truststore", "../doorman/certificates/distribute-nodes/network-root-truststore.jks",
-                            "--network-root-truststore-password", "password",
-                            "--base-directory", "$partyTargetDirectory"),
-                            partyTargetDirectory, timeout))
-        }
-
-        isDoormanNMSRunning = true
-    }
-
-    private fun runCommand(command: JarCommand, noWait: Boolean = false) {
-        if (!command.jarFile.exists()) {
-            log.warn("Jar file does not exist: ${command.jarFile}")
-            return
-        }
-        log.info("Running command: {}", command)
-        command.output.subscribe {
-            if (it.contains("Exception")) {
-                log.warn("Found error in output; interrupting command execution ...\n{}", it)
-                command.interrupt()
-            }
-        }
-        command.start()
-        if (!noWait) {
-            if (!command.waitFor()) {
-                hasError = true
-                error("Failed to execute command") {
-                    val matches = LogSource(targetDirectory)
-                            .find(".*[Ee]xception.*")
-                            .groupBy { it.filename.absolutePath }
-                    for (match in matches) {
-                        log.info("Log(${match.key}):\n${match.value.joinToString("\n") { it.contents }}")
-                    }
-                }
-            } else {
-                log.info("Command executed successfully")
-            }
         }
     }
 
@@ -312,43 +161,6 @@ class Network private constructor(
             }
         } else {
             log.info("Network set-up completed")
-        }
-    }
-
-    private fun bootstrapRPCProxy(node: Node) {
-        val cordaDistribution = node.config.distribution.path
-        val rpcProxyPortNo = node.config.nodeInterface.rpcProxy
-
-        val fromPath = Paths.get(currentDirectory.toString()+"/startRPCproxy.sh")
-        val toPath = Paths.get(cordaDistribution.toString()+"/startRPCproxy.sh")
-        Files.copy(fromPath, toPath, StandardCopyOption.COPY_ATTRIBUTES, StandardCopyOption.REPLACE_EXISTING)
-
-        log.info("Bootstrapping RPC proxy, please wait ...")
-        val rpcProxyCommand = Command(listOf("./startRPCproxy.sh", "$cordaDistribution", "$rpcProxyPortNo", ">>startRPCproxy.log","2>&1"),
-                cordaDistribution,
-                timeout
-        )
-
-        log.info("Running command: {}", rpcProxyCommand)
-        rpcProxyCommand.output.subscribe {
-            if (it.contains("Exception")) {
-                log.warn("Found error in output; interrupting RPC proxy bootstrapping action ...\n{}", it)
-                rpcProxyCommand.interrupt()
-            }
-        }
-        rpcProxyCommand.start()
-        if (!rpcProxyCommand.waitFor()) {
-            hasError = true
-            error("Failed to bootstrap RPC proxy") {
-                val matches = LogSource(targetDirectory)
-                        .find(".*[Ee]xception.*")
-                        .groupBy { it.filename.absolutePath }
-                for (match in matches) {
-                    log.info("Log(${match.key}):\n${match.value.joinToString("\n") { it.contents }}")
-                }
-            }
-        } else {
-            log.info("RPC Proxy set-up completed")
         }
     }
 
@@ -403,8 +215,6 @@ class Network private constructor(
         isRunning = true
         for (node in nodes.values) {
             node.start()
-            if (node.rpcProxy)
-                bootstrapRPCProxy(node)
         }
     }
 
@@ -466,26 +276,9 @@ class Network private constructor(
         log.info("Shutting down nodes ...")
         for (node in nodes.values) {
             node.shutDown()
-            if (node.rpcProxy) {
-                log.info("Shutting down RPC proxy ...")
-                try {
-                    val rpcProxyPortNo = node.config.nodeInterface.rpcProxy
-                    val pid = Files.lines(Paths.get("/tmp/rpcProxy-pid-$rpcProxyPortNo")).findFirst().get()
-                    Command(listOf("kill", "-9", "$pid")).run()
-                    FileUtils.deleteQuietly(Paths.get("/tmp/rpcProxy-pid-$rpcProxyPortNo").toFile())
-                }
-                catch (e: Exception) {
-                    log.warn("Unable to locate PID file: ${e.message}")
-                }
-            }
         }
 
-        if (isDoormanNMSRunning) {
-            log.info("Shutting down R3 Corda NMS server ...")
-            doormanNMS.kill()
-        }
-
-//        cleanup()
+        cleanup()
     }
 
     fun use(action: (Network) -> Unit) {
@@ -510,7 +303,7 @@ class Network private constructor(
         val log = getLogger<Network>()
         const val CLEANUP_ON_ERROR = false
 
-        fun new(type: Distribution.Type = Distribution.Type.CORDA, timeout: Duration = 2.minutes
-        ): Builder = Builder(type, timeout)
+        fun new(timeout: Duration = 2.minutes
+        ): Builder = Builder(timeout)
     }
 }

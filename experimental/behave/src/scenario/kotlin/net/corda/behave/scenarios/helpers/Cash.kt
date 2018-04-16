@@ -38,13 +38,13 @@ class Cash(state: ScenarioState) : Substeps(state) {
     }
 
     fun issueCash(issueToNode: String, amount: Long, currency: String):  SignedTransaction {
-        return withClientProxy(issueToNode) {
+        return withClient(issueToNode) {
             try {
                 val notaryList = it.notaryIdentities()
                 if (notaryList.isEmpty())
                     throw CordaRuntimeException("No Notaries configured in this network.")
                 val notaryParty = notaryList[0]
-                return@withClientProxy it.startFlow(::CashIssueFlow, Amount(amount, Currency.getInstance(currency)), OpaqueBytes.of(1), notaryParty).returnValue.getOrThrow().stx
+                return@withClient it.startFlow(::CashIssueFlow, Amount(amount, Currency.getInstance(currency)), OpaqueBytes.of(1), notaryParty).returnValue.getOrThrow().stx
             } catch (ex: Exception) {
                 log.warn("Failed to issue $amount $currency cash to $issueToNode", ex)
                 throw ex
@@ -53,13 +53,13 @@ class Cash(state: ScenarioState) : Substeps(state) {
     }
 
     fun transferCash(senderNode: String, sendToNode: String, amount: Long, currency: String):  SignedTransaction {
-        return withClientProxy(senderNode) {
+        return withClient(senderNode) {
             try {
                 val sendToX500Name =  node(sendToNode).config.cordaX500Name
                 val sendToParty = node(senderNode).rpc {
                     it.wellKnownPartyFromX500Name(sendToX500Name) ?: throw IllegalStateException("Unable to locate $sendToX500Name in Network Map Service")
                 }
-                return@withClientProxy it.startFlow(::CashPaymentFlow, Amount(amount, Currency.getInstance(currency)), sendToParty).returnValue.getOrThrow().stx
+                return@withClient it.startFlow(::CashPaymentFlow, Amount(amount, Currency.getInstance(currency)), sendToParty).returnValue.getOrThrow().stx
             } catch (ex: Exception) {
                 log.warn("Failed to transfer $amount cash from $senderNode to $sendToNode", ex)
                 throw ex

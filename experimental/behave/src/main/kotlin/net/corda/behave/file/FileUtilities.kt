@@ -11,7 +11,4 @@ val stagingRoot: File
                 File(System.getProperty("STAGING_ROOT"))
             else currentDirectory
 
-val doormanConfigDirectory: File
-    get() = currentDirectory / "src/main/resources/doorman"
-
 operator fun File.div(relative: String): File = this.resolve(relative)

@@ -26,8 +26,6 @@ class DockerContainerService(
         val commandStrArray = arrayOf("/bin/sh", "entrypoint.sh")
         log.info("Docker container executing command {} ...", commandStrArray)
         return try {
-            // command.command.toTypedArray()
-//            val id = client.info().id()
             val execCreation = client.execCreate(id, commandStrArray,
                     DockerClient.ExecCreateParam.attachStdout(),
                     DockerClient.ExecCreateParam.attachStderr())

@@ -57,13 +57,6 @@ abstract class ContainerService(
 
             client.startContainer(id)
 
-            // Exec command inside running container with attached STDOUT and STDERR
-//            val command = arrayOf("sh", "-c", "ls")
-//            val execCreation = client.execCreate(id, command, DockerClient.ExecCreateParam.attachStdout(), DockerClient.ExecCreateParam.attachStderr())
-//            val output = client.execStart(execCreation.id())
-//            val execOutput = output.readFully()
-//            log.info("Docker execute output: $execOutput")
-
             true
         } catch (e: Exception) {
             id = null

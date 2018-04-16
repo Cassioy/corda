@@ -37,8 +37,7 @@ class Startup(state: ScenarioState) : Substeps(state) {
         withNetwork {
             log.info("Retrieving identity details for node '$nodeName' ...")
             try {
-                val nodeInfo = node(nodeName).http { it.nodeInfo() }
-//                val nodeInfo = node(nodeName).rpc { it.nodeInfo() }
+                val nodeInfo = node(nodeName).rpc { it.nodeInfo() }
                 log.info("\nNode $nodeName identity details: $nodeInfo\n")
             } catch (ex: Exception) {
                 log.warn("Failed to retrieve node identity details", ex)

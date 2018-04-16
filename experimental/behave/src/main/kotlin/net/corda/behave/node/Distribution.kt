@@ -14,11 +14,6 @@ import java.net.URL
 class Distribution private constructor(
 
         /**
-         * The distribution type of Corda: Open Source or R3 Corda (Enterprise)
-         */
-        val type: Type,
-
-        /**
          * The version string of the Corda distribution.
          */
         val version: String,
@@ -60,21 +55,6 @@ class Distribution private constructor(
     val networkBootstrapper: File = nodePrefix / "$version/network-bootstrapper.jar"
 
     /**
-     * The path to the doorman jar (R3 Corda only).
-     */
-    val doormanJar: File = nodePrefix / "$version/doorman.jar"
-
-    /**
-     * The path to the DB migration jar (R3 Corda only).
-     */
-    val dbMigrationJar: File = nodePrefix / "$version/dbmigration.jar"
-
-    /**
-     * The path to the RPC proxy tool.
-     */
-    val rpcProxyJar: File = nodePrefix / "$version/corda-rpcProxy.jar"
-
-    /**
      * Ensure that the distribution is available on disk.
      */
     fun ensureAvailable() {
@@ -102,11 +82,6 @@ class Distribution private constructor(
      */
     override fun toString() = "Corda(version = $version, path = $cordaJar)"
 
-    enum class Type {
-        CORDA,
-        R3_CORDA
-    }
-
     companion object {
 
         protected val log = getLogger<Service>()
@@ -118,28 +93,20 @@ class Distribution private constructor(
         /**
          * Corda Open Source, version 3.0.0
          */
-        val V3 = fromJarFile(Type.CORDA,"corda-3.0")
-        val MASTER = fromJarFile(Type.CORDA,"corda-master")
-
-        val R3_V3 = fromJarFile(Type.R3_CORDA,"r3corda-3.0")
-        val R3_MASTER = fromJarFile(Type.R3_CORDA, "r3corda-master")
+        val V3 = fromJarFile("corda-3.0")
+        val MASTER = fromJarFile("corda-master")
 
         val LATEST_MASTER = MASTER
-        val LATEST_R3_MASTER = R3_MASTER
 
         /**
          * Get representation of a Corda distribution from Artifactory based on its version string.
          * @param type The Corda distribution type.
          * @param version The version of the Corda distribution.
          */
-        fun fromArtifactory(type: Type, version: String): Distribution {
-            val url =
-                when (type) {
-                    Type.CORDA -> URL("https://ci-artifactory.corda.r3cev.com/artifactory/corda-releases/net/corda/corda/$version/corda-$version.jar")
-                    Type.R3_CORDA -> URL("https://ci-artifactory.corda.r3cev.com/artifactory/r3-corda-releases/com/r3/corda/corda/$version/corda-$version.jar")
-                }
+        fun fromArtifactory(version: String): Distribution {
+            val url = URL("https://ci-artifactory.corda.r3cev.com/artifactory/corda-releases/net/corda/corda/$version/corda-$version.jar")
             log.info("Artifactory URL: $url\n")
-            val distribution = Distribution(type, version, url = url)
+            val distribution = Distribution(version, url = url)
             distributions.add(distribution)
             return distribution
         }
@@ -150,14 +117,14 @@ class Distribution private constructor(
          * @param version The version of the Corda distribution.
          * @param jarFile The path to the Corda fat JAR.
          */
-        fun fromJarFile(type: Type, version: String, jarFile: File? = null): Distribution {
-            val distribution = Distribution(type, version, file = jarFile)
+        fun fromJarFile(version: String, jarFile: File? = null): Distribution {
+            val distribution = Distribution(version, file = jarFile)
             distributions.add(distribution)
             return distribution
         }
 
-        fun fromDockerImage(type: Type, baseImage: String, imageTag: String): Distribution {
-            val distribution = Distribution(type, version = imageTag, baseImage = baseImage)
+        fun fromDockerImage(baseImage: String, imageTag: String): Distribution {
+            val distribution = Distribution(version = imageTag, baseImage = baseImage)
             distributions.add(distribution)
             return distribution
         }
@@ -168,14 +135,8 @@ class Distribution private constructor(
          */
         fun fromVersionString(version: String): Distribution = when (version) {
             "master"  -> LATEST_MASTER
-            "r3-master"  -> LATEST_R3_MASTER
-            "corda-3.0" -> fromArtifactory(Type.CORDA, version)
-            else -> {
-                if (version.startsWith("corda"))
-                    fromJarFile(Type.CORDA, version)
-                else
-                    fromJarFile(Type.R3_CORDA, version)
-            }
+            "corda-3.0" -> fromArtifactory(version)
+            else -> fromJarFile(version)
         }
     }
 }

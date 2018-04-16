@@ -9,10 +9,10 @@ import org.junit.Test
 
 class DockerContainerServiceTests {
 
-    private val DOORMAN_V3_SNAPSHOT = Distribution.fromDockerImage(Distribution.Type.CORDA, baseImage = "localhost:5000/r3/doorman", imageTag = "3.0-snapshot")
-    private val NOTARY_V3_SNAPSHOT = Distribution.fromDockerImage(Distribution.Type.CORDA, baseImage = "localhost:5000/r3/notary", imageTag = "3.0-snapshot")
-    private val CORDA_V3_SNAPSHOT = Distribution.fromDockerImage(Distribution.Type.CORDA, baseImage = "localhost:5000/r3/corda", imageTag = "3.0-snapshot")
-    private val CORDAPP_HC_V3_SNAPSHOT = Distribution.fromDockerImage(Distribution.Type.CORDA, baseImage = "localhost:5000/r3/notary-healthcheck", imageTag = "3.0-snapshot")
+    private val DOORMAN_V3_SNAPSHOT = Distribution.fromDockerImage(baseImage = "localhost:5000/r3/doorman", imageTag = "3.0-snapshot")
+    private val NOTARY_V3_SNAPSHOT = Distribution.fromDockerImage( baseImage = "localhost:5000/r3/notary", imageTag = "3.0-snapshot")
+    private val CORDA_V3_SNAPSHOT = Distribution.fromDockerImage(baseImage = "localhost:5000/r3/corda", imageTag = "3.0-snapshot")
+    private val CORDAPP_HC_V3_SNAPSHOT = Distribution.fromDockerImage(baseImage = "localhost:5000/r3/notary-healthcheck", imageTag = "3.0-snapshot")
 
     @Test
     fun `corda network using docker can be started and stopped`() {
